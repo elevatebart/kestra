@@ -30,6 +30,8 @@ import io.kestra.core.utils.Await;
 import io.kestra.core.utils.ExecutorsUtils;
 import io.kestra.core.utils.Hashing;
 import io.micronaut.context.ApplicationContext;
+import io.micronaut.context.event.ApplicationEvent;
+import io.micronaut.context.event.ApplicationEventPublisher;
 import io.micronaut.core.annotation.Introspected;
 import io.micronaut.inject.qualifiers.Qualifiers;
 import lombok.Getter;
@@ -81,6 +83,8 @@ public class Worker implements Runnable, AutoCloseable {
 
     private final List<WorkerThread> workerThreadReferences = new ArrayList<>();
 
+    private final ApplicationEventPublisher<AbstractWorkerEvent> eventPublisher;
+
     @Getter
     private final String workerGroup;
 
@@ -90,6 +94,8 @@ public class Worker implements Runnable, AutoCloseable {
     public Worker(ApplicationContext applicationContext, int thread, String workerGroupKey) {
         this.applicationContext = applicationContext;
         this.workerJobQueue = applicationContext.getBean(WorkerJobQueueInterface.class);
+        this.eventPublisher = applicationContext.getBean(ApplicationEventPublisher.class);
+
         this.workerTaskResultQueue = (QueueInterface<WorkerTaskResult>) applicationContext.getBean(
             QueueInterface.class,
             Qualifiers.byName(QueueFactoryInterface.WORKERTASKRESULT_NAMED)
@@ -119,6 +125,8 @@ public class Worker implements Runnable, AutoCloseable {
 
     @Override
     public void run() {
+        eventPublisher.publishEvent(new StartupEvent(this));
+
         this.executionKilledQueue.receive(executionKilled -> {
             if(executionKilled == null || !executionKilled.isLeft()) {
                 return;
@@ -615,8 +623,7 @@ public class Worker implements Runnable, AutoCloseable {
             "worker-shutdown"
         ).start();
 
-        AtomicBoolean cleanShutdown = new AtomicBoolean(false);
-
+        final AtomicBoolean cleanShutdown = new AtomicBoolean(false);
         Await.until(
             () -> {
                 if (this.executors.isTerminated() || this.workerThreadReferences.isEmpty()) {
@@ -628,8 +635,7 @@ public class Worker implements Runnable, AutoCloseable {
                     } catch (IOException e) {
                         log.error("Failed to close the workerTaskResultQueue", e);
                     }
-
-                    cleanShutdown.set(true);;
+                    cleanShutdown.set(true);
                     return true;
                 }
 
@@ -642,9 +648,9 @@ public class Worker implements Runnable, AutoCloseable {
             },
             Duration.ofSeconds(1)
         );
-
         if (cleanShutdown.get()) {
-            workerJobQueue.cleanup();
+            // WorkerShutdown Event MUST only be sent when all tasks have completed.
+            eventPublisher.publishEvent(new ShutdownEvent(this));
         }
     }
 
@@ -733,6 +739,47 @@ public class Worker implements Runnable, AutoCloseable {
                 logger.error(e.getMessage(), e);
                 taskState = io.kestra.core.models.flows.State.Type.FAILED;
             }
+        }
+    }
+
+
+    /**
+     * An abstract event for events specific to Kestra's workers.
+     */
+    public static abstract class AbstractWorkerEvent extends ApplicationEvent {
+
+        /**
+         * Constructs a prototypical Event.
+         *
+         * @param source The object on which the Event initially occurred.
+         * @throws IllegalArgumentException if source is null.
+         */
+        public AbstractWorkerEvent(final Worker source) {
+            super(source);
+        }
+
+        public Worker getWorker() {
+            return (Worker) getSource();
+        }
+    }
+
+    /**
+     * Event fired when a Worker is starting up.
+     */
+    public static class StartupEvent extends AbstractWorkerEvent {
+
+        public StartupEvent(final Worker source) {
+            super(source);
+        }
+    }
+
+    /**
+     * Event fired when a Worker is shutdown.
+     */
+    public static class ShutdownEvent extends AbstractWorkerEvent {
+
+        public ShutdownEvent(final Worker source) {
+            super(source);
         }
     }
 }

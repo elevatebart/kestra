@@ -37,7 +37,18 @@ public class WorkerInstance {
     private Instant heartbeatDate = Instant.now();
 
     public enum Status {
-        UP, DEAD
+        /**
+         * The Worker instance joined the cluster and is running.
+         */
+        UP,
+        /**
+         * The Worker instance was detected as DEAD.
+         */
+        DEAD,
+        /**
+         * The worker instance is not part of the cluster.
+         */
+        EMPTY
     }
 
 }

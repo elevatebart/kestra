@@ -29,7 +29,7 @@ public abstract class AbstractJdbcWorkerInstanceRepository extends AbstractJdbcR
     private Duration frequency;
 
     @Value("${kestra.heartbeat.heartbeat-missed}")
-    private Integer nbMissed;
+    private Integer  nbMissed;
 
     @Override
     public Optional<WorkerInstance> findByWorkerUuid(String workerUuid) {
