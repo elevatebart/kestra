@@ -1,36 +1,35 @@
 package io.kestra.jdbc.repository;
 
 import io.kestra.core.runners.WorkerInstance;
+import io.kestra.core.utils.Network;
 import io.kestra.jdbc.JdbcTestUtils;
-import io.kestra.jdbc.JooqDSLContextWrapper;
 import io.micronaut.test.extensions.junit5.annotation.MicronautTest;
 import jakarta.inject.Inject;
-import org.jooq.DSLContext;
-import org.jooq.impl.DSL;
+import org.hamcrest.Matchers;
+import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.time.Duration;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
 
 import static org.hamcrest.MatcherAssert.assertThat;
-import static org.hamcrest.Matchers.greaterThan;
-import static org.hamcrest.Matchers.is;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @MicronautTest(transactional = false)
 public abstract class AbstractJdbcWorkerInstanceRepositoryTest {
+
     @Inject
     protected AbstractJdbcWorkerInstanceRepository workerInstanceRepository;
 
     @Inject
     JdbcTestUtils jdbcTestUtils;
-
-    @Inject
-    protected JooqDSLContextWrapper dslContextWrapper;
 
     @BeforeEach
     protected void init() {
@@ -40,108 +39,198 @@ public abstract class AbstractJdbcWorkerInstanceRepositoryTest {
 
     @Test
     protected void save() {
-        WorkerInstance workerInstance = createWorkerInstance(UUID.randomUUID().toString());
-        workerInstanceRepository.save(workerInstance);
+        // Given
+        WorkerInstance instance = Fixtures.RunningWorkerInstance;
 
-        Optional<WorkerInstance> find = workerInstanceRepository.findByWorkerUuid(workerInstance.getWorkerUuid().toString());
-        assertThat(find.isPresent(), is(true));
-        assertThat(find.get().getWorkerUuid(), is(workerInstance.getWorkerUuid()));
+        // When
+        workerInstanceRepository.save(instance);
+
+        // Then
+        Optional<WorkerInstance> result = workerInstanceRepository.findByWorkerUuid(instance.getWorkerUuid().toString());
+        Assertions.assertEquals(Optional.of(instance), result);
     }
 
     @Test
-    protected void delete() {
-        WorkerInstance workerInstance = createWorkerInstance(UUID.randomUUID().toString());
-        workerInstanceRepository.save(workerInstance);
+    void shouldDeleteAllWorkerInstancesInNotRunning() {
+        // Given
+        WorkerInstance instance = AbstractJdbcWorkerInstanceRepositoryTest.Fixtures.NotRunningWorkerInstance;
+        workerInstanceRepository.save(instance);
 
-        dslContextWrapper.transaction(configuration -> {
-            DSLContext context = DSL.using(configuration);
+        // When
+        List<WorkerInstance> deleted = workerInstanceRepository.deleteAllWorkerInstancesInNotRunning();
 
-            Optional<WorkerInstance> find = workerInstanceRepository.findByWorkerUuid(workerInstance.getWorkerUuid().toString());
-            assertThat(find.isPresent(), is(true));
-            assertThat(find.get().getWorkerUuid(), is(workerInstance.getWorkerUuid()));
-
-            workerInstanceRepository.delete(context, workerInstance);
-            find = workerInstanceRepository.findByWorkerUuid(workerInstance.getWorkerUuid().toString());
-            assertThat(find.isPresent(), is(false));
-        });
+        // Then
+        Assertions.assertEquals(1, deleted.size());
+        Assertions.assertTrue(workerInstanceRepository.findAll().isEmpty());
     }
 
     @Test
-    protected void findAll() {
-        WorkerInstance workerInstance = createWorkerInstance(UUID.randomUUID().toString());
-        WorkerInstance workerInstanceAlive = createWorkerInstance(UUID.randomUUID().toString());
-        WorkerInstance workerInstanceDead = createWorkerInstance(UUID.randomUUID().toString(), false);
+    protected void shouldDeleteGivenWorkerInstance() {
+        // Given
+        Fixtures.all().forEach(workerInstanceRepository::save);
+        final WorkerInstance instance = Fixtures.DeadWorkerInstance;
 
-        workerInstanceRepository.save(workerInstance);
-        workerInstanceRepository.save(workerInstanceAlive);
-        workerInstanceRepository.save(workerInstanceDead);
+        // When
+        workerInstanceRepository.delete(instance);
 
-        dslContextWrapper.transaction(configuration -> {
-            DSLContext context = DSL.using(configuration);
-
-            List<WorkerInstance> finds = workerInstanceRepository.findAll(context);
-            assertThat(finds.size(), is(3));
-
-            finds = workerInstanceRepository.findAllToDelete(context);
-            assertThat(finds.size(), is(1));
-
-            finds = workerInstanceRepository.findAllAlive(context);
-            assertThat(finds.size(), is(2));
-        });
+        // Then
+        Optional<WorkerInstance> result = workerInstanceRepository.findByWorkerUuid(instance.getWorkerUuid().toString());
+        Assertions.assertEquals(Optional.empty(), result);
     }
 
     @Test
-    protected void find() {
-        WorkerInstance workerInstance = createWorkerInstance(UUID.randomUUID().toString());
-        workerInstanceRepository.save(workerInstance);
+    protected void shouldFindByWorkerId() {
+        // Given
+        Fixtures.all().forEach(workerInstanceRepository::save);
+        String uuid = Fixtures.DeadWorkerInstance.getWorkerUuid().toString();
 
-        Optional<WorkerInstance> find = workerInstanceRepository.findByWorkerUuid(workerInstance.getWorkerUuid().toString());
-        assertThat(find.isPresent(), is(true));
-        assertThat(find.get().getWorkerUuid(), is(workerInstance.getWorkerUuid()));
+        // When
+        Optional<WorkerInstance> result = workerInstanceRepository.findByWorkerUuid(uuid);
+
+        // Then
+        Assertions.assertEquals(Optional.of(Fixtures.DeadWorkerInstance), result);
     }
 
     @Test
-    protected void heartbeatCheckup() throws InterruptedException {
-        WorkerInstance workerInstance = createWorkerInstance(UUID.randomUUID().toString());
-        workerInstanceRepository.save(workerInstance);
-        CountDownLatch queueCount = new CountDownLatch(1);
+    protected void shouldFindAllWorkerInstances() {
+        // Given
+        Fixtures.all().forEach(workerInstanceRepository::save);
 
-        queueCount.await(15, TimeUnit.SECONDS);
-        Optional<WorkerInstance> updatedWorkerInstance = workerInstanceRepository.heartbeatCheckUp(workerInstance.getWorkerUuid().toString());
-        assertThat(updatedWorkerInstance.isPresent(), is(true));
-        assertThat(updatedWorkerInstance.get().getHeartbeatDate(), greaterThan(workerInstance.getHeartbeatDate()));
+        // When
+        List<WorkerInstance> results = workerInstanceRepository.findAll();
+
+        // Then
+        assertEquals(results.size(), Fixtures.all().size());
+        assertThat(results, Matchers.containsInAnyOrder(Fixtures.all().toArray()));
     }
 
     @Test
-    protected void heartbeatsStatusUpdate() {
-        WorkerInstance workerInstance = createWorkerInstance(UUID.randomUUID().toString());
-        workerInstance.setHeartbeatDate(Instant.now().minusSeconds(3600));
-        workerInstanceRepository.save(workerInstance);
+    protected void shouldFindAllNonRunningInstances() {
+        // Given
+        Fixtures.all().forEach(workerInstanceRepository::save);
 
-        dslContextWrapper.transaction(configuration -> {
-            DSLContext context = DSL.using(configuration);
+        // When
+        List<WorkerInstance> results = workerInstanceRepository.findAllNonRunningInstances();
 
-            workerInstanceRepository.heartbeatsStatusUpdate(context);
-            Optional<WorkerInstance> find = workerInstanceRepository.findByWorkerUuid(workerInstance.getWorkerUuid().toString());
-            assertThat(find.isPresent(), is(true));
-            assertThat(find.get().getStatus(), is(WorkerInstance.Status.DEAD));
-        });
+        // Then
+        assertEquals(Fixtures.allNonRunning().size(), results.size());
+        assertThat(results, Matchers.containsInAnyOrder(Fixtures.allNonRunning().toArray()));
     }
 
-    private WorkerInstance createWorkerInstance(String workerUuid, Boolean alive) {
-        return WorkerInstance.builder()
-            .workerUuid(UUID.fromString(workerUuid))
-            .workerGroup(null)
-            .managementPort(0)
-            .hostname("kestra.io")
-            .partitions(null)
-            .port(0)
-            .status(alive ? WorkerInstance.Status.UP : WorkerInstance.Status.DEAD)
-            .heartbeatDate(alive ?  Instant.now() : Instant.now().minusSeconds(3600))
+    @Test
+    protected void shouldFindAllInstancesInNotRunningState() {
+        // Given
+        Fixtures.all().forEach(workerInstanceRepository::save);
+
+        // When
+        List<WorkerInstance> results = workerInstanceRepository.findAllInstancesInNotRunningState();
+
+        // Then
+        assertEquals(Fixtures.allInNotRunningState().size(), results.size());
+        assertThat(results, Matchers.containsInAnyOrder(Fixtures.allInNotRunningState().toArray()));
+    }
+
+    @Test
+    protected void shouldFindTimeoutRunningInstancesGivenTimeoutInstance() {
+        // Given
+        final Instant now = Instant.now();
+        WorkerInstance instance = Fixtures.RunningWorkerInstance.toBuilder()
+            .heartbeatDate(now.minus(Duration.ofSeconds(30)).truncatedTo(ChronoUnit.MILLIS))
             .build();
+        workerInstanceRepository.save(instance);
+
+        // When
+        List<WorkerInstance> results = workerInstanceRepository.findAllTimeoutRunningInstances(
+            now,
+            Duration.ofSeconds(10)
+        );
+
+        // Then
+        assertEquals(1, results.size());
+        assertThat(results, Matchers.containsInAnyOrder(instance));
     }
 
-    private WorkerInstance createWorkerInstance(String workerUuid) {
-        return createWorkerInstance(workerUuid, true);
+    @Test
+    protected void shouldNotFindTimeoutRunningInstanceGivenHealthyInstance() {
+        // Given
+        final Instant now = Instant.now();
+        WorkerInstance instance = Fixtures.RunningWorkerInstance.toBuilder()
+            .heartbeatDate(now.minus(Duration.ofSeconds(5)).truncatedTo(ChronoUnit.MILLIS))
+            .build();
+        workerInstanceRepository.save(instance);
+
+        // When
+        List<WorkerInstance> results = workerInstanceRepository.findAllTimeoutRunningInstances(
+            now,
+            Duration.ofSeconds(10)
+        );
+
+        // Then
+        assertTrue(results.isEmpty());
+    }
+
+    public static final class Fixtures {
+
+        public static List<WorkerInstance> all() {
+            return List.of(
+                UpWorkerInstance,
+                RunningWorkerInstance,
+                PendingShutdownWorkerInstance,
+                GracefulShutdownWorkerInstance,
+                ForcedShutdownWorkerInstance,
+                DeadWorkerInstance,
+                NotRunningWorkerInstance
+            );
+        }
+
+        public static List<WorkerInstance> allNonRunning() {
+            return List.of(
+                PendingShutdownWorkerInstance,
+                GracefulShutdownWorkerInstance,
+                ForcedShutdownWorkerInstance,
+                DeadWorkerInstance,
+                NotRunningWorkerInstance
+            );
+        }
+
+        public static List<WorkerInstance> allInNotRunningState() {
+            return List.of(NotRunningWorkerInstance);
+        }
+
+        public static final WorkerInstance UpWorkerInstance =
+            workerInstanceFor(WorkerInstance.Status.UP);
+
+        public static final WorkerInstance RunningWorkerInstance =
+            workerInstanceFor(WorkerInstance.Status.RUNNING);
+
+        public static final WorkerInstance PendingShutdownWorkerInstance =
+            workerInstanceFor(WorkerInstance.Status.TERMINATING);
+
+        public static final WorkerInstance GracefulShutdownWorkerInstance =
+            workerInstanceFor(WorkerInstance.Status.TERMINATED_GRACEFULLY);
+
+        public static final WorkerInstance ForcedShutdownWorkerInstance =
+            workerInstanceFor(WorkerInstance.Status.TERMINATED_FORCED);
+
+        public static final WorkerInstance DeadWorkerInstance =
+            workerInstanceFor(WorkerInstance.Status.DEAD);
+
+        public static final WorkerInstance NotRunningWorkerInstance =
+            workerInstanceFor(WorkerInstance.Status.NOT_RUNNING);
+
+        public static WorkerInstance workerInstanceFor(final WorkerInstance.Status status) {
+            return WorkerInstance.builder()
+                .workerUuid(UUID.randomUUID())
+                .workerGroup(null)
+                .managementPort(0)
+                .hostname(Network.localHostname())
+                .partitions(Collections.emptyList())
+                .heartbeatDate(Instant.now().truncatedTo(ChronoUnit.MILLIS))
+                .startTime(Instant.now().truncatedTo(ChronoUnit.MILLIS))
+                .port(0)
+                .status(status)
+                .build();
+        }
+
     }
 }

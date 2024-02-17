@@ -32,9 +32,6 @@ kestra:
     type: local
     local:
       base-path: /tmp/unittest
-  heartbeat:
-    frequency: 10s
-    heartbeat-missed: 3
   anonymous-usage-report:
     enabled: true
     uri: https://api.kestra.io/v1/reports/usages
@@ -103,7 +100,9 @@ kestra:
       executionqueued:
         table: "execution_queued"
         cls: io.kestra.core.runners.ExecutionQueued
-
+  worker:
+    liveness:
+      enabled: false
 datasources:
   h2:
     url: jdbc:h2:mem:public;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE

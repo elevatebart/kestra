@@ -25,10 +25,6 @@ kestra:
     type: local
     local:
       base-path: /tmp/unittest
-  heartbeat:
-    frequency: 10s
-    heartbeat-missed: 3
-
   jdbc:
     tables:
       queues:
@@ -83,3 +79,6 @@ kestra:
       min-poll-interval: 10ms
       max-poll-interval: 100ms
       poll-switch-interval: 5s
+  worker:
+    liveness:
+      enabled: false

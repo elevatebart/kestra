@@ -212,6 +212,16 @@ kestra:
     initial-delay: 5m
     fixed-delay: 1h
 
-  heartbeat:
-    frequency: 10s
-    heartbeat-missed: 3
+  worker:
+    # Worker liveness configuration when using Kestra with JDBC deployment.
+    liveness:
+      # The expected time between liveness probe for a workers.
+      interval: 3s
+      # The timeout used to detect worker failures.
+      timeout: 15s
+      # The time to wait before executing a liveness probe for a worker.
+      initialDelay: 30s
+      # The time to wait before revoking a disconnected or pending shutdown worker.
+      terminationGracePeriod: 5m
+      # The expected time between worker heartbeats to the executor.
+      heartbeatInterval: 3s

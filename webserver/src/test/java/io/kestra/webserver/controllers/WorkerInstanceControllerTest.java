@@ -40,7 +40,7 @@ class WorkerInstanceControllerTest extends JdbcH2ControllerTest {
             .hostname("kestra.io")
             .partitions(null)
             .port(0)
-            .status(WorkerInstance.Status.UP)
+            .status(WorkerInstance.Status.RUNNING)
             .build();
 
 

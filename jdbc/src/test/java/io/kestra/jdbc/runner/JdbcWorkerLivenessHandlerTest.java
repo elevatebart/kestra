@@ -25,6 +25,7 @@ import io.micronaut.test.extensions.junit5.annotation.MicronautTest;
 import jakarta.inject.Inject;
 import jakarta.inject.Named;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 
@@ -43,10 +44,10 @@ import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.not;
 import static org.junit.jupiter.api.Assertions.fail;
 
-@MicronautTest(transactional = false, environments = "heartbeat")
+@MicronautTest(transactional = false, environments =  {"test", "liveness"})
 @TestInstance(TestInstance.Lifecycle.PER_CLASS) // must be per-class to allow calling once init() which took a lot of time
 @Property(name = "kestra.server-type", value = "EXECUTOR")
-public abstract class JdbcHeartbeatTest {
+public abstract class JdbcWorkerLivenessHandlerTest {
     @Inject
     private StandAloneRunner runner;
 
@@ -86,17 +87,17 @@ public abstract class JdbcHeartbeatTest {
     }
 
     @Test
-    void taskResubmit() throws Exception {
+    void shouldReEmitTasksWhenWorkerIsDetectedAsNonResponding() throws Exception {
         CountDownLatch runningLatch = new CountDownLatch(1);
         CountDownLatch resubmitLatch = new CountDownLatch(1);
 
-        Worker worker = new Worker(applicationContext, 8, null);
-        applicationContext.registerSingleton(worker);
+        // create first worker
+        Worker worker = new Worker(applicationContext, 1, null);
         worker.run();
+
         runner.setSchedulerEnabled(false);
         runner.setWorkerEnabled(false);
         runner.run();
-
         AtomicReference<WorkerTaskResult> workerTaskResult = new AtomicReference<>(null);
         workerTaskResultQueue.receive(either -> {
             workerTaskResult.set(either.getLeft());
@@ -110,15 +111,14 @@ public abstract class JdbcHeartbeatTest {
             }
         });
 
-        workerJobQueue.emit(workerTask(1500));
-        runningLatch.await(2, TimeUnit.SECONDS);
-        worker.shutdown();
+        workerJobQueue.emit(workerTask(Duration.ofSeconds(10)));
+        runningLatch.await(5, TimeUnit.SECONDS);
+        worker.shutdown(); // stop processing task
 
-        Worker newWorker = new Worker(applicationContext, 8, null);
-        applicationContext.registerSingleton(newWorker);
+        // create second worker (this will revoke previously one).
+        Worker newWorker = new Worker(applicationContext, 1, null);
         newWorker.run();
-        resubmitLatch.await(15, TimeUnit.SECONDS);
-
+        resubmitLatch.await(30, TimeUnit.SECONDS);
         newWorker.shutdown();
         assertThat(workerTaskResult.get().getTaskRun().getState().getCurrent(), is(Type.SUCCESS));
     }
@@ -133,7 +133,7 @@ public abstract class JdbcHeartbeatTest {
         runner.setSchedulerEnabled(false);
         runner.setWorkerEnabled(false);
         runner.run();
-        WorkerTask workerTask = workerTask(1500);
+        WorkerTask workerTask = workerTask(Duration.ofSeconds(10));
         skipExecutionService.setSkipExecutions(List.of(workerTask.getTaskRun().getExecutionId()));
 
         AtomicReference<WorkerTaskResult> workerTaskResult = new AtomicReference<>(null);
@@ -166,10 +166,10 @@ public abstract class JdbcHeartbeatTest {
     }
 
     @Test
-    void triggerResubmit() throws Exception {
+    void shouldReEmitTriggerWhenWorkerIsDetectedAsNonResponding() throws Exception {
         CountDownLatch countDownLatch = new CountDownLatch(1);
 
-        Worker worker = new Worker(applicationContext, 8, null);
+        Worker worker = new Worker(applicationContext, 1, null);
         applicationContext.registerSingleton(worker);
         worker.run();
         runner.setSchedulerEnabled(false);
@@ -182,32 +182,33 @@ public abstract class JdbcHeartbeatTest {
             countDownLatch.countDown();
         });
 
-        WorkerTrigger workerTrigger = workerTrigger(7000);
+        WorkerTrigger workerTrigger = workerTrigger(Duration.ofSeconds(10));
         workerJobQueue.emit(workerTrigger);
         Await.until(() -> worker.getEvaluateTriggerRunningCount()
-                .get("io.kestra.jdbc.runner.jdbcheartbeattest_workertrigger_unit-test") != null,
+                .get(workerTrigger.getTriggerContext().uid()) != null,
             Duration.ofMillis(100),
             Duration.ofSeconds(5)
         );
         worker.shutdown();
 
-        Worker newWorker = new Worker(applicationContext, 8, null);
+        Worker newWorker = new Worker(applicationContext, 1, null);
         applicationContext.registerSingleton(newWorker);
         newWorker.run();
-        boolean lastAwait = countDownLatch.await(12, TimeUnit.SECONDS);
+
+        boolean lastAwait = countDownLatch.await(10, TimeUnit.SECONDS);
 
         newWorker.shutdown();
         assertThat("Last await result was " + lastAwait, workerTriggerResult.get().getSuccess(), is(true));
     }
 
-    private WorkerTask workerTask(long sleepDuration) {
+    private WorkerTask workerTask(Duration sleep) {
         Sleep bash = Sleep.builder()
             .type(Sleep.class.getName())
             .id("unit-test")
-            .duration(sleepDuration)
+            .duration(sleep.toMillis())
             .build();
 
-        Execution execution = TestsUtils.mockExecution(flowBuilder(sleepDuration), ImmutableMap.of());
+        Execution execution = TestsUtils.mockExecution(flowBuilder(sleep), ImmutableMap.of());
 
         ResolvedTask resolvedTask = ResolvedTask.of(bash);
 
@@ -218,11 +219,11 @@ public abstract class JdbcHeartbeatTest {
             .build();
     }
 
-    private WorkerTrigger workerTrigger(long sleepDuration) {
+    private WorkerTrigger workerTrigger(Duration sleep) {
         SleepTrigger trigger = SleepTrigger.builder()
             .type(SleepTrigger.class.getName())
             .id("unit-test")
-            .duration(sleepDuration)
+            .duration(sleep.toMillis())
             .build();
 
         Map.Entry<ConditionContext, TriggerContext> mockedTrigger = TestsUtils.mockTrigger(runContextFactory, trigger);
@@ -234,17 +235,17 @@ public abstract class JdbcHeartbeatTest {
             .build();
     }
 
-    private Flow flowBuilder(long sleepDuration) {
+    private Flow flowBuilder(final Duration sleep) {
         Sleep bash = Sleep.builder()
             .type(Sleep.class.getName())
             .id("unit-test")
-            .duration(sleepDuration)
+            .duration(sleep.toMillis())
             .build();
 
         SleepTrigger trigger = SleepTrigger.builder()
             .type(SleepTrigger.class.getName())
             .id("unit-test")
-            .duration(sleepDuration)
+            .duration(sleep.toMillis())
             .build();
 
         return Flow.builder()

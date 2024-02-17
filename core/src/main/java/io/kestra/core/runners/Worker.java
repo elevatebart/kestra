@@ -22,6 +22,7 @@ import io.kestra.core.queues.QueueException;
 import io.kestra.core.queues.QueueFactoryInterface;
 import io.kestra.core.queues.QueueInterface;
 import io.kestra.core.queues.WorkerJobQueueInterface;
+import io.kestra.core.runners.WorkerInstance.Status;
 import io.kestra.core.serializers.JacksonMapper;
 import io.kestra.core.services.LogService;
 import io.kestra.core.services.WorkerGroupService;
@@ -54,6 +55,9 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+
+import static io.kestra.core.runners.WorkerInstance.Status.TERMINATED_FORCED;
+import static io.kestra.core.runners.WorkerInstance.Status.TERMINATED_GRACEFULLY;
 
 @Slf4j
 @Introspected
@@ -125,7 +129,7 @@ public class Worker implements Runnable, AutoCloseable {
 
     @Override
     public void run() {
-        eventPublisher.publishEvent(new StartupEvent(this));
+        eventPublisher.publishEvent(new WorkerStateChangeEvent(Status.RUNNING, this));
 
         this.executionKilledQueue.receive(executionKilled -> {
             if(executionKilled == null || !executionKilled.isLeft()) {
@@ -610,6 +614,7 @@ public class Worker implements Runnable, AutoCloseable {
 
     @VisibleForTesting
     public void closeWorker(Duration awaitDuration) throws Exception {
+        eventPublisher.publishEvent(new WorkerStateChangeEvent(Status.TERMINATING,this));
         workerJobQueue.pause();
         new Thread(
             () -> {
@@ -649,9 +654,11 @@ public class Worker implements Runnable, AutoCloseable {
             Duration.ofSeconds(1)
         );
         if (cleanShutdown.get()) {
-            // WorkerShutdown Event MUST only be sent when all tasks have completed.
-            eventPublisher.publishEvent(new ShutdownEvent(this));
+            eventPublisher.publishEvent(new WorkerStateChangeEvent(TERMINATED_GRACEFULLY, this));
+        } else {
+            eventPublisher.publishEvent(new WorkerStateChangeEvent(TERMINATED_FORCED, this));
         }
+        log.info("Closed worker ({})", (cleanShutdown.get() ? TERMINATED_GRACEFULLY : TERMINATED_FORCED).name().toLowerCase());
     }
 
     @VisibleForTesting
@@ -742,7 +749,6 @@ public class Worker implements Runnable, AutoCloseable {
         }
     }
 
-
     /**
      * An abstract event for events specific to Kestra's workers.
      */
@@ -764,22 +770,20 @@ public class Worker implements Runnable, AutoCloseable {
     }
 
     /**
-     * Event fired when a Worker is starting up.
+     * Event fired when a Worker state is changing.
      */
-    public static class StartupEvent extends AbstractWorkerEvent {
+    public static class WorkerStateChangeEvent extends AbstractWorkerEvent {
 
-        public StartupEvent(final Worker source) {
+        private final Status state;
+
+        public WorkerStateChangeEvent(final Status state,
+                                      final Worker source) {
             super(source);
+            this.state = state;
         }
-    }
 
-    /**
-     * Event fired when a Worker is shutdown.
-     */
-    public static class ShutdownEvent extends AbstractWorkerEvent {
-
-        public ShutdownEvent(final Worker source) {
-            super(source);
+        public Status getState() {
+            return state;
         }
     }
 }

@@ -3,11 +3,10 @@ package io.kestra.jdbc;
 import io.kestra.core.exceptions.DeserializationException;
 import io.kestra.core.queues.QueueFactoryInterface;
 import io.kestra.core.queues.QueueInterface;
-import io.kestra.core.repositories.WorkerInstanceRepositoryInterface;
 import io.kestra.core.runners.*;
 import io.kestra.core.utils.Either;
 import io.kestra.jdbc.repository.AbstractJdbcWorkerJobRunningRepository;
-import io.kestra.jdbc.runner.JdbcHeartbeat;
+import io.kestra.jdbc.runner.JdbcWorkerLivenessHeartbeat;
 import io.kestra.jdbc.runner.JdbcQueue;
 import io.micronaut.context.ApplicationContext;
 import io.micronaut.inject.qualifiers.Qualifiers;
@@ -20,7 +19,7 @@ import java.util.function.Consumer;
 @Slf4j
 public class JdbcWorkerJobQueueService {
     private final JdbcQueue<WorkerJob> workerTaskQueue;
-    private final JdbcHeartbeat jdbcHeartbeat;
+    private final JdbcWorkerLivenessHeartbeat jdbcWorkerLivenessHeartbeat;
     private final AbstractJdbcWorkerJobRunningRepository jdbcWorkerJobRunningRepository;
 
     private Runnable queueStop;
@@ -31,14 +30,15 @@ public class JdbcWorkerJobQueueService {
             QueueInterface.class,
             Qualifiers.byName(QueueFactoryInterface.WORKERJOB_NAMED)
         );
-        this.jdbcHeartbeat = applicationContext.getBean(JdbcHeartbeat.class);
+        this.jdbcWorkerLivenessHeartbeat = applicationContext.getBean(JdbcWorkerLivenessHeartbeat.class);
         this.jdbcWorkerJobRunningRepository = applicationContext.getBean(AbstractJdbcWorkerJobRunningRepository.class);
     }
 
     public Runnable receive(String consumerGroup, Class<?> queueType, Consumer<Either<WorkerJob, DeserializationException>> consumer) {
 
         this.queueStop = workerTaskQueue.receiveTransaction(consumerGroup, queueType, (dslContext, eithers) -> {
-            WorkerInstance workerInstance = jdbcHeartbeat.getWorkerInstance();
+
+            WorkerInstance workerInstance = jdbcWorkerLivenessHeartbeat.getWorkerInstance();
 
             eithers.forEach(either -> {
                 if (either.isRight()) {
