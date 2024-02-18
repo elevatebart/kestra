@@ -1,9 +1,9 @@
 kestra:
   worker:
+    terminationGracePeriod: 0s
     liveness:
       enabled: true
       interval: 1s
       timeout: 5s
       initialDelay: 0s
-      terminationGracePeriod: 0s
       heartbeatInterval: 1s

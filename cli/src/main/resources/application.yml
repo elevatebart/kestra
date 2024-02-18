@@ -213,6 +213,9 @@ kestra:
     fixed-delay: 1h
 
   worker:
+    # The expected time a worker to complete all of its
+    # tasks before initiating a graceful shutdown.
+    terminationGracePeriod: 5m
     # Worker liveness configuration when using Kestra with JDBC deployment.
     liveness:
       # The expected time between liveness probe for a workers.
@@ -221,7 +224,5 @@ kestra:
       timeout: 15s
       # The time to wait before executing a liveness probe for a worker.
       initialDelay: 30s
-      # The time to wait before revoking a disconnected or pending shutdown worker.
-      terminationGracePeriod: 5m
       # The expected time between worker heartbeats to the executor.
       heartbeatInterval: 3s

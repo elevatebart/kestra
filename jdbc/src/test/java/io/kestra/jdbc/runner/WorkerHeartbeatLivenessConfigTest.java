@@ -19,7 +19,6 @@ class WorkerHeartbeatLivenessConfigTest {
         Assertions.assertEquals(config.interval(), Duration.ofSeconds(5));
         Assertions.assertNotNull(config.initialDelay());
         Assertions.assertNotNull(config.timeout());
-        Assertions.assertNotNull(config.terminationGracePeriod());
         Assertions.assertNotNull(config.heartbeatInterval());
     }
 }

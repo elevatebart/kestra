@@ -25,7 +25,6 @@ public record WorkerHeartbeatLivenessConfig(
     @NotNull @Bindable(defaultValue = "5s") Duration interval,
     @NotNull @Bindable(defaultValue = "30s") Duration timeout,
     @NotNull @Bindable(defaultValue = "30s") Duration initialDelay,
-    @NotNull @Bindable(defaultValue = "3s") Duration heartbeatInterval,
-    @NotNull @Bindable(defaultValue = "5m") Duration terminationGracePeriod
+    @NotNull @Bindable(defaultValue = "3s") Duration heartbeatInterval
 ) {
 }

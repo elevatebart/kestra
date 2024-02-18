@@ -73,6 +73,8 @@ public class Worker implements Runnable, AutoCloseable {
     private final QueueInterface<MetricEntry> metricEntryQueue;
     private final MetricRegistry metricRegistry;
 
+    private final WorkerConfig workerConfig;
+
     private final Set<String> killedExecution = ConcurrentHashMap.newKeySet();
 
     // package private to allow its usage within tests
@@ -125,6 +127,9 @@ public class Worker implements Runnable, AutoCloseable {
         this.workerGroup = workerGroupService.resolveGroupFromKey(workerGroupKey);
 
         this.logService = applicationContext.getBean(LogService.class);
+
+        this.workerConfig = applicationContext.getBean(WorkerConfig.class);
+
     }
 
     @Override
@@ -609,7 +614,7 @@ public class Worker implements Runnable, AutoCloseable {
 
     @Override
     public void close() throws Exception {
-        closeWorker(Duration.ofMinutes(5));
+        closeWorker(workerConfig.terminationGracePeriod());
     }
 
     @VisibleForTesting

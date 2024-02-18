@@ -1,5 +1,6 @@
 package io.kestra.jdbc.runner;
 
+import io.kestra.core.runners.WorkerConfig;
 import io.kestra.core.runners.WorkerInstance;
 import io.kestra.jdbc.repository.AbstractJdbcWorkerInstanceRepository;
 import io.kestra.jdbc.service.JdbcWorkerInstanceService;
@@ -26,6 +27,8 @@ public final class JdbcWorkerLivenessHandler extends AbstractJdbcWorkerLivenessT
     private static final String TASK_NAME = "jdbc-worker-liveness-handler-task";
 
     private final JdbcExecutor executor;
+
+    private final WorkerConfig workerConfig;
     private final JdbcWorkerInstanceService workerInstanceService;
     private final AbstractJdbcWorkerInstanceRepository workerInstanceRepository;
 
@@ -36,14 +39,17 @@ public final class JdbcWorkerLivenessHandler extends AbstractJdbcWorkerLivenessT
      *
      * @param executor                 The {@link JdbcExecutor}.
      * @param workerInstanceRepository The {@link AbstractJdbcWorkerInstanceRepository}.
-     * @param configuration            The worker liveness configuration.
+     * @param workerConfig             The worker configuration.
+     * @param livenessConfig           The worker liveness configuration.
      */
     @Inject
     public JdbcWorkerLivenessHandler(final JdbcExecutor executor,
                                      final JdbcWorkerInstanceService workerInstanceService,
                                      final AbstractJdbcWorkerInstanceRepository workerInstanceRepository,
-                                     final WorkerHeartbeatLivenessConfig configuration) {
-        super(TASK_NAME, configuration);
+                                     final WorkerConfig workerConfig,
+                                     final WorkerHeartbeatLivenessConfig livenessConfig) {
+        super(TASK_NAME, livenessConfig);
+        this.workerConfig = workerConfig;
         this.workerInstanceService = workerInstanceService;
         this.workerInstanceRepository = workerInstanceRepository;
         this.executor = executor;
@@ -101,7 +107,7 @@ public final class JdbcWorkerLivenessHandler extends AbstractJdbcWorkerLivenessT
             final List<WorkerInstance> uncleanShutdownWorkers = new ArrayList<>();
 
             // ...all workers that have transitioned to DEAD or PENDING_SHUTDOWN for more than terminationGracePeriod).
-            final Instant terminationGracePeriodStart = now.minus(workerLivenessConfig.terminationGracePeriod());
+            final Instant terminationGracePeriodStart = now.minus(workerConfig.terminationGracePeriod());
             uncleanShutdownWorkers.addAll(nonRunningWorkers.stream()
                 .filter(nonRunning -> nonRunning.getStatus().isDisconnectedOrPendingShutDown())
                 .filter(deadOrShuttingDown -> deadOrShuttingDown.getHeartbeatDate().isBefore(terminationGracePeriodStart))
