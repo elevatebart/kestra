@@ -38,10 +38,16 @@ public class WorkerInstance {
     private Instant heartbeatDate = Instant.now();
 
     /**
-     * The instance the worker instance started.
+     * The instant the worker instance started.
      */
     @Builder.Default
     private Instant startTime = Instant.now();
+
+    /**
+     * The Kestra server owning the worker.
+     */
+    @Builder.Default
+    private ServerInstance server = ServerInstance.getInstance();
 
     /**
      * WorkerInstance status are the possible status that a Kestra's Worker instance can be in.
@@ -50,7 +56,7 @@ public class WorkerInstance {
      *
      * <pre>
      *                 +--------------+
-     *         +&lt;----- | Running      | --------&gt;+
+     *         +<----- | Running      | -------->+
      *         |       +------+-------+          |
      *         |              |                  |
      *         |              v                  |
@@ -69,8 +75,6 @@ public class WorkerInstance {
      *                  | Not          |
      *                  | Running      |
      *                  +--------------+
-     *
-     *
      * </pre>
      */
     public enum Status {

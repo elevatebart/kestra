@@ -35,6 +35,7 @@ import java.time.Duration;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
@@ -76,14 +77,18 @@ public abstract class JdbcWorkerLivenessHandlerTest {
     QueueInterface<WorkerTriggerResult> workerTriggerResultQueue;
 
     @Inject
+    JdbcWorkerLivenessHandler jdbcWorkerLivenessHandler;
+
+    @Inject
     SkipExecutionService skipExecutionService;
 
     @BeforeAll
     void init() throws IOException, URISyntaxException {
         jdbcTestUtils.drop();
         jdbcTestUtils.migrate();
-
         TestsUtils.loads(repositoryLoader);
+        // Simulate that executor and workers are not running on the same JVM.
+        jdbcWorkerLivenessHandler.setServerInstance(new ServerInstance(UUID.randomUUID()));
     }
 
     @Test

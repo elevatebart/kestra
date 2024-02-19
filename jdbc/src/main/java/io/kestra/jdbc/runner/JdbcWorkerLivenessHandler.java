@@ -1,5 +1,7 @@
 package io.kestra.jdbc.runner;
 
+import com.google.common.annotations.VisibleForTesting;
+import io.kestra.core.runners.ServerInstance;
 import io.kestra.core.runners.WorkerConfig;
 import io.kestra.core.runners.WorkerInstance;
 import io.kestra.jdbc.repository.AbstractJdbcWorkerInstanceRepository;
@@ -27,12 +29,13 @@ public final class JdbcWorkerLivenessHandler extends AbstractJdbcWorkerLivenessT
     private static final String TASK_NAME = "jdbc-worker-liveness-handler-task";
 
     private final JdbcExecutor executor;
-
     private final WorkerConfig workerConfig;
     private final JdbcWorkerInstanceService workerInstanceService;
     private final AbstractJdbcWorkerInstanceRepository workerInstanceRepository;
 
     private Instant lastScheduledExecution;
+
+    private ServerInstance serverInstance = ServerInstance.getInstance();
 
     /**
      * Creates a new {@link JdbcWorkerLivenessHandler} instance.
@@ -76,16 +79,17 @@ public final class JdbcWorkerLivenessHandler extends AbstractJdbcWorkerLivenessT
                 // gets all non-responding workers (important: here only workers in a current state UP may be considered DEAD).
                 .findAllTimeoutRunningInstances(now, workerLivenessConfig.timeout())
                 .stream()
+                // exclude any worker running on the same server as the executor, to prevent the latter from shuting down.
+                .filter(instance -> !instance.getServer().equals(serverInstance))
                 // only keep workers eligible for liveness probe
                 .filter(instance -> instance.getStartTime().isBefore(minInstantForLivenessProbe))
                 // warn
                 .peek(instance -> log.warn("Detected non-responding worker [id={}, workerGroup={}, hostname={}] after timeout ({}ms).",
-                        instance.getWorkerUuid(),
-                        instance.getWorkerGroup(),
-                        instance.getHostname(),
-                        now.toEpochMilli() - instance.getHeartbeatDate().toEpochMilli()
-                    )
-                )
+                    instance.getWorkerUuid(),
+                    instance.getWorkerGroup(),
+                    instance.getHostname(),
+                    now.toEpochMilli() - instance.getHeartbeatDate().toEpochMilli()
+                ))
                 .toList();
             // (2) Attempt to transit all non-responding workers to DEAD.
             nonRespondingWorkers.forEach(instance -> {
@@ -161,5 +165,10 @@ public final class JdbcWorkerLivenessHandler extends AbstractJdbcWorkerLivenessT
                 });
         }
         lastScheduledExecution = now;
+    }
+
+    @VisibleForTesting
+    void setServerInstance(final ServerInstance serverInstance) {
+        this.serverInstance = serverInstance;
     }
 }
