@@ -187,9 +187,13 @@ public class JdbcExecutor implements ExecutorInterface {
     @Inject
     private LogService logService;
 
+    @Inject
+    private JdbcWorkerLivenessHandler workerLivenessHandler;
+
     @SneakyThrows
     @Override
     public void run() {
+        workerLivenessHandler.setExecutor(this);
         flowListeners.run();
         flowListeners.listen(flows -> this.allFlows = flows);
 

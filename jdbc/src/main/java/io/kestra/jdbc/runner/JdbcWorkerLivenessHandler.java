@@ -6,9 +6,9 @@ import io.kestra.core.runners.WorkerConfig;
 import io.kestra.core.runners.WorkerInstance;
 import io.kestra.jdbc.repository.AbstractJdbcWorkerInstanceRepository;
 import io.kestra.jdbc.service.JdbcWorkerInstanceService;
-import io.micronaut.context.annotation.Context;
 import io.micronaut.context.annotation.Requires;
 import jakarta.inject.Inject;
+import jakarta.inject.Singleton;
 import lombok.extern.slf4j.Slf4j;
 
 import java.time.Duration;
@@ -21,33 +21,29 @@ import java.util.stream.Stream;
  * This class is responsible for managing the liveness of Worker instances.
  */
 @Slf4j
-@Context
+@Singleton
 @JdbcRunnerEnabled
 @Requires(property = "kestra.server-type", pattern = "(EXECUTOR|STANDALONE)")
 public final class JdbcWorkerLivenessHandler extends AbstractJdbcWorkerLivenessTask {
 
     private static final String TASK_NAME = "jdbc-worker-liveness-handler-task";
 
-    private final JdbcExecutor executor;
+    private volatile JdbcExecutor executor;
     private final WorkerConfig workerConfig;
     private final JdbcWorkerInstanceService workerInstanceService;
     private final AbstractJdbcWorkerInstanceRepository workerInstanceRepository;
-
     private Instant lastScheduledExecution;
-
     private ServerInstance serverInstance = ServerInstance.getInstance();
 
     /**
      * Creates a new {@link JdbcWorkerLivenessHandler} instance.
      *
-     * @param executor                 The {@link JdbcExecutor}.
      * @param workerInstanceRepository The {@link AbstractJdbcWorkerInstanceRepository}.
      * @param workerConfig             The worker configuration.
      * @param livenessConfig           The worker liveness configuration.
      */
     @Inject
-    public JdbcWorkerLivenessHandler(final JdbcExecutor executor,
-                                     final JdbcWorkerInstanceService workerInstanceService,
+    public JdbcWorkerLivenessHandler(final JdbcWorkerInstanceService workerInstanceService,
                                      final AbstractJdbcWorkerInstanceRepository workerInstanceRepository,
                                      final WorkerConfig workerConfig,
                                      final WorkerHeartbeatLivenessConfig livenessConfig) {
@@ -55,7 +51,6 @@ public final class JdbcWorkerLivenessHandler extends AbstractJdbcWorkerLivenessT
         this.workerConfig = workerConfig;
         this.workerInstanceService = workerInstanceService;
         this.workerInstanceRepository = workerInstanceRepository;
-        this.executor = executor;
         this.lastScheduledExecution = Instant.now();
     }
 
@@ -71,7 +66,10 @@ public final class JdbcWorkerLivenessHandler extends AbstractJdbcWorkerLivenessT
      * {@inheritDoc}
      **/
     @Override
+
     protected void onSchedule(final Instant now, final boolean isLivenessEnabled) {
+        if (executor == null) return; // only true during startup
+
         // (1) Detect and handle non-responding dead Workers.
         if (isLivenessEnabled) {
             final Instant minInstantForLivenessProbe = now.minus(workerLivenessConfig.initialDelay());
@@ -165,6 +163,10 @@ public final class JdbcWorkerLivenessHandler extends AbstractJdbcWorkerLivenessT
                 });
         }
         lastScheduledExecution = now;
+    }
+
+    void setExecutor(final JdbcExecutor executor) {
+        this.executor = executor;
     }
 
     @VisibleForTesting
