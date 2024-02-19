@@ -26,7 +26,7 @@ public class JdbcWorkerInstanceService {
     }
 
     public Optional<WorkerStateTransitionResponse> safelyTransitWorkerTo(final WorkerInstance instance,
-                                                                       final WorkerInstance.Status status) {
+                                                                         final WorkerInstance.Status status) {
         try {
             return mayTransitWorkerTo(instance, status);
         } catch (Exception e) {

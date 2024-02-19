@@ -1,5 +1,6 @@
 package io.kestra.jdbc.runner;
 
+import com.google.common.annotations.VisibleForTesting;
 import io.micronaut.core.annotation.Introspected;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
@@ -24,6 +25,7 @@ public abstract class AbstractJdbcWorkerLivenessTask implements Runnable, AutoCl
     protected final WorkerHeartbeatLivenessConfig workerLivenessConfig;
     private final AtomicBoolean isStopped = new AtomicBoolean(false);
     private ScheduledExecutorService scheduledExecutorService;
+    private Instant lastScheduledExecution;
 
     /**
      * Creates a new {@link AbstractJdbcWorkerLivenessTask} instance.
@@ -35,6 +37,7 @@ public abstract class AbstractJdbcWorkerLivenessTask implements Runnable, AutoCl
                                              final WorkerHeartbeatLivenessConfig configuration) {
         this.name = Objects.requireNonNull(name, "name cannot be null");
         this.workerLivenessConfig = Objects.requireNonNull(configuration, "configuration cannot be null");
+        this.lastScheduledExecution = Instant.now();
     }
 
     /**
@@ -43,11 +46,22 @@ public abstract class AbstractJdbcWorkerLivenessTask implements Runnable, AutoCl
     @Override
     public void run() {
         final Instant now = Instant.now();
+        run(now);
+    }
+
+    @VisibleForTesting
+    public void run(final Instant now) {
         try {
             onSchedule(now, workerLivenessConfig.enabled());
         } catch (Exception e) {
             log.error("Unexpected error while executing '{}'. Error: {}", now, e.getMessage());
+        } finally {
+            lastScheduledExecution = now;
         }
+    }
+
+    protected Instant lastScheduledExecution() {
+        return lastScheduledExecution;
     }
 
     /**
@@ -66,7 +80,7 @@ public abstract class AbstractJdbcWorkerLivenessTask implements Runnable, AutoCl
         if (!workerLivenessConfig.enabled()) {
             log.warn(
                 "Worker liveness is currently disabled (`worker.liveness.enabled=false`) " +
-                "If you are running in production environment, please ensure this property is configured to `true`. "
+                "If you are running in production environment, please make sure this property is configured to `true`."
             );
         }
         if (scheduledExecutorService == null && !isStopped.get()) {

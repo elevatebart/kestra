@@ -32,7 +32,6 @@ public final class JdbcWorkerLivenessHandler extends AbstractJdbcWorkerLivenessT
     private final WorkerConfig workerConfig;
     private final JdbcWorkerInstanceService workerInstanceService;
     private final AbstractJdbcWorkerInstanceRepository workerInstanceRepository;
-    private Instant lastScheduledExecution;
     private ServerInstance serverInstance = ServerInstance.getInstance();
 
     /**
@@ -51,7 +50,6 @@ public final class JdbcWorkerLivenessHandler extends AbstractJdbcWorkerLivenessT
         this.workerConfig = workerConfig;
         this.workerInstanceService = workerInstanceService;
         this.workerInstanceRepository = workerInstanceRepository;
-        this.lastScheduledExecution = Instant.now();
     }
 
     /**
@@ -152,7 +150,7 @@ public final class JdbcWorkerLivenessHandler extends AbstractJdbcWorkerLivenessT
             // Log the newly-connected workers.
             workerInstanceRepository.findAllInstancesInState(WorkerInstance.Status.RUNNING)
                 .stream()
-                .filter(instance -> instance.getStartTime().isAfter(lastScheduledExecution))
+                .filter(instance -> instance.getStartTime().isAfter(lastScheduledExecution()))
                 .forEach(instance -> {
                     log.info("Detected new worker [id={}, workerGroup={}, hostname={}] (started at: {}).",
                         instance.getWorkerUuid(),
@@ -162,10 +160,9 @@ public final class JdbcWorkerLivenessHandler extends AbstractJdbcWorkerLivenessT
                     );
                 });
         }
-        lastScheduledExecution = now;
     }
 
-    void setExecutor(final JdbcExecutor executor) {
+    synchronized void setExecutor(final JdbcExecutor executor) {
         this.executor = executor;
     }
 

@@ -49,7 +49,6 @@ import io.kestra.core.utils.Either;
 import io.kestra.jdbc.JdbcMapper;
 import io.kestra.jdbc.repository.AbstractJdbcExecutionRepository;
 import io.kestra.jdbc.repository.AbstractJdbcFlowTopologyRepository;
-import io.kestra.jdbc.repository.AbstractJdbcWorkerInstanceRepository;
 import io.kestra.jdbc.repository.AbstractJdbcWorkerJobRunningRepository;
 import io.micronaut.context.ApplicationContext;
 import io.micronaut.transaction.exceptions.CannotCreateTransactionException;
@@ -157,9 +156,6 @@ public class JdbcExecutor implements ExecutorInterface {
 
     @Inject
     private AbstractJdbcFlowTopologyRepository flowTopologyRepository;
-
-    @Inject
-    private AbstractJdbcWorkerInstanceRepository workerInstanceRepository;
 
     protected List<Flow> allFlows;
 
