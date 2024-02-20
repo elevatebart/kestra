@@ -15,6 +15,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
 
 /**
@@ -28,7 +29,7 @@ public final class JdbcWorkerLivenessHandler extends AbstractJdbcWorkerLivenessT
 
     private static final String TASK_NAME = "jdbc-worker-liveness-handler-task";
 
-    private volatile JdbcExecutor executor;
+    private final AtomicReference<JdbcExecutor> executor = new AtomicReference<>();
     private final WorkerConfig workerConfig;
     private final JdbcWorkerInstanceService workerInstanceService;
     private final AbstractJdbcWorkerInstanceRepository workerInstanceRepository;
@@ -64,9 +65,8 @@ public final class JdbcWorkerLivenessHandler extends AbstractJdbcWorkerLivenessT
      * {@inheritDoc}
      **/
     @Override
-
     protected void onSchedule(final Instant now, final boolean isLivenessEnabled) {
-        if (executor == null) return; // only true during startup
+        if (executor.get() == null) return; // only True during startup
 
         // (1) Detect and handle non-responding dead Workers.
         if (isLivenessEnabled) {
@@ -93,7 +93,7 @@ public final class JdbcWorkerLivenessHandler extends AbstractJdbcWorkerLivenessT
                     WorkerInstance.Status nextStatus = instance.getStatus().equals(WorkerInstance.Status.UP) ?
                         WorkerInstance.Status.DEAD :
                         WorkerInstance.Status.DISCONNECTED;
-                    workerInstanceService.safelyTransitWorkerTo(instance, nextStatus);
+                    workerInstanceService.safelyTransitionWorkerTo(instance, nextStatus);
                 }
             );
         }
@@ -106,7 +106,7 @@ public final class JdbcWorkerLivenessHandler extends AbstractJdbcWorkerLivenessT
             // (4) List of workers for which we don't know the actual state of tasks executions.
             final List<WorkerInstance> uncleanShutdownWorkers = new ArrayList<>();
 
-            // ...all workers that have transitioned to DEAD or PENDING_SHUTDOWN for more than terminationGracePeriod).
+            // ...all workers that have transitioned to DISCONNECTED, DEAD, or TERMINATING for more than terminationGracePeriod).
             final Instant terminationGracePeriodStart = now.minus(workerConfig.terminationGracePeriod());
             uncleanShutdownWorkers.addAll(nonRunningWorkers.stream()
                 .filter(nonRunning -> nonRunning.getStatus().isDisconnectedOrPendingShutDown())
@@ -121,7 +121,7 @@ public final class JdbcWorkerLivenessHandler extends AbstractJdbcWorkerLivenessT
                 })
                 .toList()
             );
-            // ...all workers that have transitioned to FORCED_SHUTDOWN.
+            // ...all workers that have transitioned to TERMINATED_FORCED.
             uncleanShutdownWorkers.addAll(nonRunningWorkers.stream()
                 .filter(nonRunning -> nonRunning.getStatus().equals(WorkerInstance.Status.TERMINATED_FORCED))
                 .toList()
@@ -129,14 +129,14 @@ public final class JdbcWorkerLivenessHandler extends AbstractJdbcWorkerLivenessT
 
             // (5) Re-emit all WorkerJobs for unclean workers
             if (!uncleanShutdownWorkers.isEmpty()) {
-                executor.reEmitWorkerJobsForWorkers(configuration, uncleanShutdownWorkers);
+                executor.get().reEmitWorkerJobsForWorkers(configuration, uncleanShutdownWorkers);
             }
 
-            // (6) Transit all GRACEFUL AND UNCLEAN SHUTDOWN workers to NOT_RUNNING.
+            // (6) Transit all TERMINATED_GRACEFULLY AND UNCLEAN SHUTDOWN workers to NOT_RUNNING.
             Stream<WorkerInstance> cleanShutdownWorkers = nonRunningWorkers.stream()
                 .filter(nonRunning -> nonRunning.getStatus().equals(WorkerInstance.Status.TERMINATED_GRACEFULLY));
             Stream.concat(cleanShutdownWorkers, uncleanShutdownWorkers.stream()).forEach(
-                instance -> workerInstanceService.mayTransitWorkerTo(configuration, instance, WorkerInstance.Status.NOT_RUNNING)
+                instance -> workerInstanceService.mayTransitionWorkerTo(configuration, instance, WorkerInstance.Status.NOT_RUNNING)
             );
         });
 
@@ -163,7 +163,7 @@ public final class JdbcWorkerLivenessHandler extends AbstractJdbcWorkerLivenessT
     }
 
     synchronized void setExecutor(final JdbcExecutor executor) {
-        this.executor = executor;
+        this.executor.set(executor);
     }
 
     @VisibleForTesting

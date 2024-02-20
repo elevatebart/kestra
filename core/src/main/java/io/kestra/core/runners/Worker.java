@@ -91,6 +91,8 @@ public class Worker implements Runnable, AutoCloseable {
 
     private final ApplicationEventPublisher<AbstractWorkerEvent> eventPublisher;
 
+    private final AtomicBoolean skipGracefulTermination = new AtomicBoolean(false);
+
     @Getter
     private final String workerGroup;
 
@@ -618,20 +620,39 @@ public class Worker implements Runnable, AutoCloseable {
     }
 
     @VisibleForTesting
-    public void closeWorker(Duration awaitDuration) throws Exception {
+    public void closeWorker(Duration timeout) {
+        log.info("Terminating.");
         eventPublisher.publishEvent(new WorkerStateChangeEvent(Status.TERMINATING,this));
         workerJobQueue.pause();
+
+        final boolean terminatedGracefully;
+        if (!skipGracefulTermination.get()) {
+            terminatedGracefully = waitForTasksCompletion(timeout);
+        } else {
+            log.info("Terminating now and skip waiting for tasks completions.");
+            this.executors.shutdownNow();
+            closeWorkerTaskResultQueue();
+            terminatedGracefully = false;
+        }
+
+        WorkerInstance.Status status = terminatedGracefully ? TERMINATED_GRACEFULLY : TERMINATED_FORCED;
+        eventPublisher.publishEvent(new WorkerStateChangeEvent(status, this));
+        log.info("Worker closed ({}).", status.name().toLowerCase());
+    }
+
+    private boolean waitForTasksCompletion(final Duration timeout) {
         new Thread(
             () -> {
                 try {
                     this.executors.shutdown();
-                    this.executors.awaitTermination(awaitDuration.toMillis(), TimeUnit.MILLISECONDS);
+                    this.executors.awaitTermination(timeout.toMillis(), TimeUnit.MILLISECONDS);
                 } catch (InterruptedException e) {
                     log.error("Fail to shutdown the worker", e);
                 }
             },
             "worker-shutdown"
         ).start();
+
 
         final AtomicBoolean cleanShutdown = new AtomicBoolean(false);
         Await.until(
@@ -640,11 +661,7 @@ public class Worker implements Runnable, AutoCloseable {
                     log.info("No more worker threads busy, shutting down!");
 
                     // we ensure that last produce message are send
-                    try {
-                        this.workerTaskResultQueue.close();
-                    } catch (IOException e) {
-                        log.error("Failed to close the workerTaskResultQueue", e);
-                    }
+                    closeWorkerTaskResultQueue();
                     cleanShutdown.set(true);
                     return true;
                 }
@@ -658,12 +675,15 @@ public class Worker implements Runnable, AutoCloseable {
             },
             Duration.ofSeconds(1)
         );
-        if (cleanShutdown.get()) {
-            eventPublisher.publishEvent(new WorkerStateChangeEvent(TERMINATED_GRACEFULLY, this));
-        } else {
-            eventPublisher.publishEvent(new WorkerStateChangeEvent(TERMINATED_FORCED, this));
+        return cleanShutdown.get();
+    }
+
+    private void closeWorkerTaskResultQueue() {
+        try {
+            this.workerTaskResultQueue.close();
+        } catch (IOException e) {
+            log.error("Failed to close the workerTaskResultQueue", e);
         }
-        log.info("Closed worker ({})", (cleanShutdown.get() ? TERMINATED_GRACEFULLY : TERMINATED_FORCED).name().toLowerCase());
     }
 
     @VisibleForTesting
@@ -752,6 +772,15 @@ public class Worker implements Runnable, AutoCloseable {
                 taskState = io.kestra.core.models.flows.State.Type.FAILED;
             }
         }
+    }
+
+    /**
+     * Specify whether to skip graceful termination on shutdown.
+     *
+     * @param skipGracefulTermination {@code true} to skip graceful termination on shutdown.
+     */
+    public void skipGracefulTermination(final boolean skipGracefulTermination) {
+        this.skipGracefulTermination.set(skipGracefulTermination);
     }
 
     /**

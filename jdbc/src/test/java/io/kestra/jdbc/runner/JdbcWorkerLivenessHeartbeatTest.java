@@ -34,13 +34,16 @@ class JdbcWorkerLivenessHeartbeatTest {
     @Mock
     public JdbcWorkerInstanceService service;
 
+    @Mock
+    private Worker worker;
+
     @Captor
     ArgumentCaptor<WorkerInstance> workerInstanceCaptor;
 
     private JdbcWorkerLivenessHeartbeat workerLivenessHeartbeat;
 
     @Mock
-    private Runnable onHeartBeatFailure;
+    private JdbcWorkerLivenessHeartbeat.OnHeartbeatFailureCallback onHeartbeatFailureCallback;
 
     @BeforeEach
     void beforeEach() {
@@ -51,7 +54,7 @@ class JdbcWorkerLivenessHeartbeatTest {
             0,
             0,
             ServerType.WORKER,
-            onHeartBeatFailure
+            onHeartbeatFailureCallback
         );
     }
 
@@ -63,7 +66,7 @@ class JdbcWorkerLivenessHeartbeatTest {
             .status(RUNNING)
             .build();
 
-        final Worker.WorkerStateChangeEvent event = new Worker.WorkerStateChangeEvent(RUNNING, Mockito.mock(Worker.class));
+        final Worker.WorkerStateChangeEvent event = new Worker.WorkerStateChangeEvent(RUNNING, worker);
        Mockito.when(repository.save(Mockito.any(WorkerInstance.class))).thenReturn(instance);
 
         // When
@@ -91,10 +94,10 @@ class JdbcWorkerLivenessHeartbeatTest {
         );
 
         Mockito
-            .when(service.mayTransitWorkerTo(Mockito.any(WorkerInstance.class), Mockito.any(WorkerInstance.Status.class)))
+            .when(service.mayTransitionWorkerTo(Mockito.any(WorkerInstance.class), Mockito.any(WorkerInstance.Status.class)))
             .thenReturn(Optional.of(response));
 
-        workerLivenessHeartbeat.setWorkerInstance(WorkerInstance
+        workerLivenessHeartbeat.setWorkerInstance(worker, WorkerInstance
             .builder()
             .status(RUNNING)
             .build());
@@ -104,7 +107,7 @@ class JdbcWorkerLivenessHeartbeatTest {
 
         // Then
         Assertions.assertEquals(instance, workerLivenessHeartbeat.getWorkerInstance());
-        Mockito.verify(onHeartBeatFailure, Mockito.never()).run();
+        Mockito.verify(onHeartbeatFailureCallback, Mockito.never()).execute(Mockito.any(), Mockito.any());
     }
 
     @Test
@@ -121,10 +124,10 @@ class JdbcWorkerLivenessHeartbeatTest {
         );
 
         Mockito
-            .when(service.mayTransitWorkerTo(Mockito.any(WorkerInstance.class), Mockito.any(WorkerInstance.Status.class)))
+            .when(service.mayTransitionWorkerTo(Mockito.any(WorkerInstance.class), Mockito.any(WorkerInstance.Status.class)))
             .thenReturn(Optional.of(response));
 
-        workerLivenessHeartbeat.setWorkerInstance(WorkerInstance
+        workerLivenessHeartbeat.setWorkerInstance(worker, WorkerInstance
             .builder()
             .status(RUNNING)
             .build());
@@ -134,25 +137,25 @@ class JdbcWorkerLivenessHeartbeatTest {
 
         // Then
         Assertions.assertEquals(instance, workerLivenessHeartbeat.getWorkerInstance());
-        Mockito.verify(onHeartBeatFailure, Mockito.only()).run();
+        Mockito.verify(onHeartbeatFailureCallback, Mockito.only()).execute(Mockito.any(), Mockito.any());
     }
 
     @Test
     void shouldRunOnHeartbeatFailureForEmptyInstance() {
         // Given
-        workerLivenessHeartbeat.setWorkerInstance(WorkerInstance
+        workerLivenessHeartbeat.setWorkerInstance(worker, WorkerInstance
             .builder()
             .status(RUNNING)
             .build());
         Mockito
-            .when(service.mayTransitWorkerTo(Mockito.any(WorkerInstance.class), Mockito.any(WorkerInstance.Status.class)))
+            .when(service.mayTransitionWorkerTo(Mockito.any(WorkerInstance.class), Mockito.any(WorkerInstance.Status.class)))
             .thenReturn(Optional.empty());
 
         // When
         workerLivenessHeartbeat.onSchedule(Instant.now(), true);
 
         // Then
-        Mockito.verify(onHeartBeatFailure, Mockito.only()).run();
+        Mockito.verify(onHeartbeatFailureCallback, Mockito.only()).execute(Mockito.any(), Mockito.any());
     }
 
     @Test
@@ -162,21 +165,21 @@ class JdbcWorkerLivenessHeartbeatTest {
             .builder()
             .status(RUNNING)
             .build();
-        workerLivenessHeartbeat.setWorkerInstance(instance);
+        workerLivenessHeartbeat.setWorkerInstance(worker, instance);
 
         // When
         Instant now = Instant.now();
         final WorkerStateTransitionResponse response = new WorkerStateTransitionResponse(instance, SUCCEED);
-        Mockito.when(service.mayTransitWorkerTo(Mockito.any(WorkerInstance.class), Mockito.any(WorkerInstance.Status.class))).thenReturn(Optional.of(response));
+        Mockito.when(service.mayTransitionWorkerTo(Mockito.any(WorkerInstance.class), Mockito.any(WorkerInstance.Status.class))).thenReturn(Optional.of(response));
         workerLivenessHeartbeat.run(now); // SUCCEED
-        Mockito.when(service.mayTransitWorkerTo(Mockito.any(WorkerInstance.class), Mockito.any(WorkerInstance.Status.class))).thenThrow(new RuntimeException());
+        Mockito.when(service.mayTransitionWorkerTo(Mockito.any(WorkerInstance.class), Mockito.any(WorkerInstance.Status.class))).thenThrow(new RuntimeException());
         workerLivenessHeartbeat.run(now.plus(Duration.ofSeconds(2))); // FAIL
-        Mockito.verify(onHeartBeatFailure, Mockito.never()).run();
+        Mockito.verify(onHeartbeatFailureCallback, Mockito.never()).execute(Mockito.any(), Mockito.any());
         workerLivenessHeartbeat.run(now.plus(Duration.ofSeconds(4))); // FAIL
-        Mockito.verify(onHeartBeatFailure, Mockito.never()).run();
+        Mockito.verify(onHeartbeatFailureCallback, Mockito.never()).execute(Mockito.any(), Mockito.any());
         workerLivenessHeartbeat.run(now.plus(Duration.ofSeconds(6))); // TIMEOUT
         // Then
-        Mockito.verify(onHeartBeatFailure, Mockito.only()).run();
+        Mockito.verify(onHeartbeatFailureCallback, Mockito.only()).execute(Mockito.any(), Mockito.any());
     }
 
     @Test

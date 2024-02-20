@@ -9,7 +9,6 @@ import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.jooq.Configuration;
 
 import java.time.Instant;
-import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
@@ -25,60 +24,59 @@ public class JdbcWorkerInstanceService {
         this.repository = Objects.requireNonNull(repository, "repository cannot be null");
     }
 
-    public Optional<WorkerStateTransitionResponse> safelyTransitWorkerTo(final WorkerInstance instance,
-                                                                         final WorkerInstance.Status status) {
+    public void safelyTransitionWorkerTo(final WorkerInstance instance,
+                                         final WorkerInstance.Status status) {
         try {
-            return mayTransitWorkerTo(instance, status);
+            mayTransitionWorkerTo(instance, status);
         } catch (Exception e) {
             // Log and ignore exception - it's safe to ignore error because the run() method is supposed to schedule at fix rate.
             log.error("Unexpected error while worker [id={}, workerGroup={}, hostname={}] transition from {} to {}. Error: {}",
-                    instance.getWorkerUuid(),
-                    instance.getWorkerGroup(),
-                    instance.getHostname(),
-                    instance.getStatus(),
-                    status,
-                    e.getMessage()
+                instance.getWorkerUuid(),
+                instance.getWorkerGroup(),
+                instance.getHostname(),
+                instance.getStatus(),
+                status,
+                e.getMessage()
             );
         }
-        return Optional.empty();
     }
 
     /**
-     * Attempt to transit the status of a given worker to given new status.
+     * Attempt to transition the status of a given worker to given new status.
      * This method may not update the worker if the transition is not valid.
      *
      * @param instance  the worker instance.
      * @param newStatus the new status of the worker.
      * @return an optional of the {@link WorkerInstance} or {@link Optional#empty()} if the worker is not running.
      */
-    public Optional<WorkerStateTransitionResponse> mayTransitWorkerTo(final WorkerInstance instance,
-                                                                      final WorkerInstance.Status newStatus) {
-        return this.repository.transactionResult(configuration -> mayTransitWorkerTo(configuration, instance, newStatus));
+    public Optional<WorkerStateTransitionResponse> mayTransitionWorkerTo(final WorkerInstance instance,
+                                                                         final WorkerInstance.Status newStatus) {
+        return this.repository.transactionResult(configuration -> mayTransitionWorkerTo(configuration, instance, newStatus));
     }
 
     /**
-     * Attempt to transit the status of a given worker to given new status.
+     * Attempt to transition the status of a given worker to given new status.
      * This method may not update the worker if the transition is not valid.
      *
      * @param instance  the worker instance.
      * @param newStatus the new status of the worker.
      * @return an optional of the {@link WorkerInstance} or {@link Optional#empty()} if the worker is not running.
      */
-    public Optional<WorkerStateTransitionResponse> mayTransitWorkerTo(final Configuration configuration,
-                                                                      final WorkerInstance instance,
-                                                                      final WorkerInstance.Status newStatus) {
+    public Optional<WorkerStateTransitionResponse> mayTransitionWorkerTo(final Configuration configuration,
+                                                                         final WorkerInstance instance,
+                                                                         final WorkerInstance.Status newStatus) {
         Optional<ImmutablePair<WorkerInstance, WorkerInstance>> optional = mayUpdateStatusById(
-                configuration,
-                instance.getWorkerUuid(),
-                newStatus
+            configuration,
+            instance.getWorkerUuid(),
+            newStatus
         );
         if (optional.isEmpty()) {
             log.error("Failed to transition worker [id={}, workerGroup={}, hostname={}] to {}. Cause: {}",
-                    instance.getWorkerUuid(),
-                    instance.getWorkerGroup(),
-                    instance.getHostname(),
-                    newStatus,
-                    "Invalid worker."
+                instance.getWorkerUuid(),
+                instance.getWorkerGroup(),
+                instance.getHostname(),
+                newStatus,
+                "Invalid worker."
             );
             return Optional.empty();
         }
@@ -90,12 +88,12 @@ public class JdbcWorkerInstanceService {
 
         if (newState == null) {
             log.warn("Failed to transition worker [id={}, workerGroup={}, hostname={}] from {} to {}. Cause: {}.",
-                    instance.getWorkerUuid(),
-                    instance.getWorkerGroup(),
-                    instance.getHostname(),
-                    oldState.getStatus(),
-                    newStatus,
-                    "Invalid transition"
+                instance.getWorkerUuid(),
+                instance.getWorkerGroup(),
+                instance.getHostname(),
+                oldState.getStatus(),
+                newStatus,
+                "Invalid transition"
             );
             return Optional.of(new WorkerStateTransitionResponse(oldState, WorkerStateTransitionResult.INVALID));
         }
@@ -103,11 +101,11 @@ public class JdbcWorkerInstanceService {
         // Logs if the state was changed, otherwise this method called for heartbeat purpose.
         if (!oldState.getStatus().equals(newState.getStatus())) {
             log.info("Worker [id={}, workerGroup={}, hostname={}] transition from {} to {}.",
-                    instance.getWorkerUuid(),
-                    instance.getWorkerGroup(),
-                    instance.getHostname(),
-                    oldState.getStatus(),
-                    newState.getStatus()
+                instance.getWorkerUuid(),
+                instance.getWorkerGroup(),
+                instance.getHostname(),
+                oldState.getStatus(),
+                newState.getStatus()
             );
         }
         return Optional.of(new WorkerStateTransitionResponse(newState, WorkerStateTransitionResult.SUCCEED));
@@ -127,9 +125,9 @@ public class JdbcWorkerInstanceService {
                                                                                         final WorkerInstance.Status newStatus) {
         // Find the WorkerInstance to be updated
         Optional<WorkerInstance> optional = repository.findByWorkerUuid(
-                id.toString(),
-                configuration,
-                true
+            id.toString(),
+            configuration,
+            true
         );
         // Check whether worker was found.
         if (optional.isEmpty()) {
@@ -140,11 +138,11 @@ public class JdbcWorkerInstanceService {
         WorkerInstance workerInstance = optional.get();
         if (workerInstance.getStatus().isValidTransition(newStatus)) {
             WorkerInstance updated = workerInstance
-                    .toBuilder()
-                    .status(newStatus)
-                    // it's OK to update heartbeat so that we used that field to track every Status changes.
-                    .heartbeatDate(Instant.now())
-                    .build();
+                .toBuilder()
+                .status(newStatus)
+                // it's OK to update heartbeat so that we used that field to track every Status changes.
+                .heartbeatDate(Instant.now())
+                .build();
             return Optional.of(new ImmutablePair<>(workerInstance, repository.save(updated)));
         }
         return Optional.of(new ImmutablePair<>(workerInstance, null));

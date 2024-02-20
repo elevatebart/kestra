@@ -37,7 +37,7 @@ abstract class JdbcWorkerInstanceServiceTest {
 
         // When
         Optional<JdbcWorkerInstanceService.WorkerStateTransitionResponse> result = workerInstanceService
-            .mayTransitWorkerTo(instance, WorkerInstance.Status.TERMINATING);
+            .mayTransitionWorkerTo(instance, WorkerInstance.Status.TERMINATING);
 
         // Then
         Assertions.assertTrue(result.isEmpty());
@@ -51,7 +51,7 @@ abstract class JdbcWorkerInstanceServiceTest {
 
         // When
         Optional<JdbcWorkerInstanceService.WorkerStateTransitionResponse> result = workerInstanceService
-            .mayTransitWorkerTo(instance, WorkerInstance.Status.TERMINATING); // RUNNING -> PENDING_SHUTDOWN: valid transition
+            .mayTransitionWorkerTo(instance, WorkerInstance.Status.TERMINATING); // RUNNING -> PENDING_SHUTDOWN: valid transition
 
         // Then
         Assertions.assertTrue(result.isPresent());
@@ -68,7 +68,7 @@ abstract class JdbcWorkerInstanceServiceTest {
 
         // When
         Optional<JdbcWorkerInstanceService.WorkerStateTransitionResponse> result = workerInstanceService
-            .mayTransitWorkerTo(instance, WorkerInstance.Status.RUNNING); // DEAD -> RUNNING: INVALID transition
+            .mayTransitionWorkerTo(instance, WorkerInstance.Status.RUNNING); // DEAD -> RUNNING: INVALID transition
 
         // Then
         Assertions.assertTrue(result.isPresent());

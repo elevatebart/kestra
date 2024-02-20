@@ -14,12 +14,14 @@ import io.micronaut.context.annotation.Value;
 import io.micronaut.runtime.event.annotation.EventListener;
 import jakarta.inject.Inject;
 import lombok.extern.slf4j.Slf4j;
+import org.checkerframework.checker.units.qual.A;
 
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Consumer;
@@ -34,14 +36,16 @@ import java.util.function.Consumer;
 public final class JdbcWorkerLivenessHeartbeat extends AbstractJdbcWorkerLivenessTask {
 
     private static final String TASK_NAME = "jdbc-worker-liveness-heartbeat-task";
-    private final AtomicReference<WorkerInstance> workerInstance = new AtomicReference<>();
+    private final AtomicReference<WorkerHolder> workerHolder = new AtomicReference<>();
     private final int serverPort;
     private final int endpointsAllPort;
     private final JdbcWorkerInstanceService workerInstanceService;
     private final AbstractJdbcWorkerInstanceRepository workerInstanceRepository;
     private final ServerType serverType;
     private final ReentrantLock stateLock = new ReentrantLock();
-    private final Runnable onHeartbeatFailure;
+    private final OnHeartbeatFailureCallback onHeartbeatFailureCallback;
+
+    private final AtomicBoolean isWorkerStateUpdatable = new AtomicBoolean(true);
 
     private Instant lastSucceedStateUpdated;
 
@@ -59,8 +63,7 @@ public final class JdbcWorkerLivenessHeartbeat extends AbstractJdbcWorkerLivenes
             serverPort,
             endpointsAllPort,
             serverType,
-            // TODO implement a graceful and clean way to shutdown the application.
-            () -> Runtime.getRuntime().exit(1)
+            new ExitOnHeartbeatFailureCallback()
         );
     }
 
@@ -70,15 +73,15 @@ public final class JdbcWorkerLivenessHeartbeat extends AbstractJdbcWorkerLivenes
                                 final JdbcWorkerInstanceService workerInstanceService,
                                 int serverPort,
                                 int endpointsAllPort,
-                                ServerType serverType,
-                                Runnable onHeartbeatFailure) {
+                                final ServerType serverType,
+                                final OnHeartbeatFailureCallback onHeartbeatFailureCallback) {
         super(TASK_NAME, configuration);
+        this.workerInstanceRepository = Objects.requireNonNull(workerInstanceRepository, "workerInstanceRepository cannot be null");
+        this.workerInstanceService = Objects.requireNonNull(workerInstanceService, "workerInstanceService cannot be null");
+        this.onHeartbeatFailureCallback =  Objects.requireNonNull(onHeartbeatFailureCallback, "onHeartbeatFailureCallback cannot be null");
         this.serverPort = serverPort;
         this.endpointsAllPort = endpointsAllPort;
-        this.workerInstanceRepository = workerInstanceRepository;
-        this.workerInstanceService = workerInstanceService;
         this.serverType = serverType;
-        this.onHeartbeatFailure = onHeartbeatFailure;
     }
 
     /**
@@ -88,6 +91,18 @@ public final class JdbcWorkerLivenessHeartbeat extends AbstractJdbcWorkerLivenes
      */
     @EventListener
     public void onWorkerStateChangeEvent(final Worker.WorkerStateChangeEvent event) {
+        if (!isWorkerStateUpdatable.get()) {
+            WorkerInstance instance = getWorkerInstance();
+            log.debug(
+                "[Worker id={}, workerGroup={}, hostname={}] Worker state is not updatable. StateChangeEvent[{}] skipped.",
+                instance.getWorkerUuid(),
+                instance.getWorkerGroup(),
+                instance.getHostname(),
+                event.getState()
+            );
+            return;
+        }
+
         WorkerInstance.Status newState = event.getState();
         switch (newState) {
             case RUNNING:
@@ -96,17 +111,17 @@ public final class JdbcWorkerLivenessHeartbeat extends AbstractJdbcWorkerLivenes
             case TERMINATING, TERMINATED_GRACEFULLY, TERMINATED_FORCED:
                 updateWorkerInstanceState(Instant.now(), newState, actualState -> {
                     if (actualState.hasCompletedShutdown()) {
-                        WorkerInstance instance = workerInstance.get();
+                        WorkerInstance instance = getWorkerInstance();
                         log.error(
                             "[Worker id={}, workerGroup={}, hostname={}] Shutdown already completed ({}). " +
-                                "This error may occur if the worker has already been evicted by a Kestra executor due to a prior error.",
+                             "This error may occur if the worker has already been evicted by a Kestra executor due to a prior error.",
                             instance.getWorkerUuid(),
                             instance.getWorkerGroup(),
                             instance.getHostname(),
                             actualState
                         );
+                        this.isWorkerStateUpdatable.set(false);
                     }
-                    log.warn("Failed to ");
                 });
                 break;
             default:
@@ -119,7 +134,7 @@ public final class JdbcWorkerLivenessHeartbeat extends AbstractJdbcWorkerLivenes
      */
     private void onRunning(final Worker.WorkerStateChangeEvent event) {
         WorkerInstance instance = newWorkerInstance(event.getWorker());
-        setWorkerInstance(this.workerInstanceRepository.save(instance));
+        setWorkerInstance(event.getWorker(), this.workerInstanceRepository.save(instance));
         log.info("[Worker id={}, group='{}'] Connected",
             instance.getWorkerUuid(),
             instance.getWorkerGroup()
@@ -141,16 +156,16 @@ public final class JdbcWorkerLivenessHeartbeat extends AbstractJdbcWorkerLivenes
     protected void onSchedule(final Instant now, final boolean isLivenessEnabled) {
         if (!isLivenessEnabled) return; // Heartbeat is disabled
 
-        if (workerInstance.get() == null) {
+        if (workerHolder.get() == null) {
             log.trace("Worker instance not registered yet. Skip scheduled heartbeat.");
             return;
         }
 
         // Proactively check whether this worker has timeout.
-        if (serverType.equals(ServerType.WORKER) && isWorkerDisconnected(now)) {
+        if (ServerType.WORKER.equals(serverType) && isWorkerDisconnected(now)) {
             log.error("[Worker id={}, group='{}'] Failed to update state before reaching timeout ({}ms). Disconnecting.",
-                workerInstance.get().getWorkerUuid(),
-                workerInstance.get().getWorkerGroup(),
+                getWorkerInstance().getWorkerUuid(),
+                getWorkerInstance().getWorkerGroup(),
                 getElapsedMilliSinceLastStateUpdate(now)
             );
             updateWorkerInstanceState(now, WorkerInstance.Status.DISCONNECTED, unused -> {
@@ -160,11 +175,11 @@ public final class JdbcWorkerLivenessHeartbeat extends AbstractJdbcWorkerLivenes
 
         // Try to update the worker instance state.
         final long start = System.currentTimeMillis();
-        updateWorkerInstanceState(now, workerInstance.get().getStatus(), this::onHeartbeatFailure);
+        updateWorkerInstanceState(now, getWorkerInstance().getStatus(), this::onHeartbeatFailure);
         log.trace("[Worker id={}, group='{}'] Completed worker heartbeat for state {} ({}ms).",
-            workerInstance.get().getWorkerUuid(),
-            workerInstance.get().getWorkerGroup(),
-            workerInstance.get().getStatus(),
+            getWorkerInstance().getWorkerUuid(),
+            getWorkerInstance().getWorkerGroup(),
+            getWorkerInstance().getStatus(),
             System.currentTimeMillis() - start
         );
     }
@@ -184,18 +199,19 @@ public final class JdbcWorkerLivenessHeartbeat extends AbstractJdbcWorkerLivenes
     }
 
     private void onHeartbeatFailure(final WorkerInstance.Status status) {
-        WorkerInstance currentWorkerInstance = workerInstance.get();
-        log.warn("[Worker id={}, group='{}'] Worker was transition to : {}.",
+        WorkerInstance currentWorkerInstance = getWorkerInstance();
+        log.warn("[Worker id={}, group='{}'] Worker is : {}.",
             currentWorkerInstance.getWorkerUuid(),
             currentWorkerInstance.getWorkerGroup(),
             status
         );
 
-        log.error("[Worker id={}, group='{}'] Shutting down server.",
+        log.error("[Worker id={}, group='{}'] Terminating '{}' server.",
+            serverType,
             currentWorkerInstance.getWorkerUuid(),
             currentWorkerInstance.getWorkerGroup()
         );
-        this.onHeartbeatFailure.run();
+        this.onHeartbeatFailureCallback.execute(getWorker(), getWorkerInstance());
     }
 
     /**
@@ -208,14 +224,14 @@ public final class JdbcWorkerLivenessHeartbeat extends AbstractJdbcWorkerLivenes
                                            final WorkerInstance.Status newState,
                                            final Consumer<WorkerInstance.Status> onStateChangeError) {
         // Check whether a local worker was already registered
-        if (workerInstance.get() == null) {
+        if (workerHolder.get() == null) {
             return;
         }
 
-        WorkerInstance localInstance = workerInstance.get();
+        WorkerInstance localInstance = getWorkerInstance();
         // Pre-check the state transition validation with the known local state.
         if (!localInstance.getStatus().isValidTransition(newState)) {
-            log.warn("Failed to transition worker [id={}, workerGroup={}, hostname={}] from {} to {}. Cause: {}.",
+            log.warn("Cannot transition worker [id={}, workerGroup={}, hostname={}] from {} to {}. Cause: {}.",
                 localInstance.getWorkerUuid(),
                 localInstance.getWorkerGroup(),
                 localInstance.getHostname(),
@@ -223,36 +239,41 @@ public final class JdbcWorkerLivenessHeartbeat extends AbstractJdbcWorkerLivenes
                 newState,
                 "Invalid transition"
             );
-            return;
+            onStateChangeError.accept(localInstance.getStatus());
         }
 
         // Ensure only one thread can the update the worker instance at a time.
         stateLock.lock();
         Runnable returnCallback = null;
         try {
+            // try to update the worker state
             Optional<JdbcWorkerInstanceService.WorkerStateTransitionResponse> optional = workerInstanceService
-                .mayTransitWorkerTo(workerInstance.get(), newState);
+                .mayTransitionWorkerTo(getWorkerInstance(), newState);
 
             if (optional.isEmpty()) {
+                getWorkerInstance().setStatus(WorkerInstance.Status.EMPTY);
                 returnCallback = () -> onStateChangeError.accept(WorkerInstance.Status.EMPTY);
                 return;
             }
 
             JdbcWorkerInstanceService.WorkerStateTransitionResponse response = optional.get();
-            WorkerInstance instance = response.workerInstance();
-            setWorkerInstance(instance);
-            if (response.result().equals(WorkerStateTransitionResult.INVALID)) {
-                returnCallback = () -> onStateChangeError.accept(instance.getStatus());
+
+            // update the local worker instance
+            setWorkerInstance(getWorker(), response.workerInstance());
+
+            // check the transition result
+            final WorkerStateTransitionResult result = response.result();
+            if (result.equals(WorkerStateTransitionResult.INVALID)) {
+                returnCallback = () -> onStateChangeError.accept(response.workerInstance().getStatus());
             }
 
-            if (response.result().equals(WorkerStateTransitionResult.SUCCEED)) {
+            if (result.equals(WorkerStateTransitionResult.SUCCEED)) {
                 this.lastSucceedStateUpdated = now;
             }
-
         } catch (Exception e) {
             log.error("[Worker id={}, group='{}'] Failed to update worker state. Error: {}",
-                workerInstance.get().getWorkerUuid(),
-                workerInstance.get().getWorkerGroup(),
+                getWorkerInstance().getWorkerUuid(),
+                getWorkerInstance().getWorkerGroup(),
                 e.getMessage()
             );
         } finally {
@@ -265,21 +286,26 @@ public final class JdbcWorkerLivenessHeartbeat extends AbstractJdbcWorkerLivenes
         }
     }
 
+    private Worker getWorker() {
+        return workerHolder.get().worker();
+    }
+
     /**
      * Returns the local registered worker instance.
      *
      * @return the {@link WorkerInstance}.
      */
     public WorkerInstance getWorkerInstance() {
-        if (workerInstance.get() == null) {
+        if (workerHolder.get() == null) {
             throw new IllegalStateException("No worker running"); // should not happen;
         }
-        return workerInstance.get();
+        return workerHolder.get().instance();
     }
 
     @VisibleForTesting
-    void setWorkerInstance(final WorkerInstance instance) {
-        this.workerInstance.set(Objects.requireNonNull(instance, "cannot set null worker instance."));
+    void setWorkerInstance(final Worker worker, final WorkerInstance instance) {
+        Objects.requireNonNull(instance, "cannot set null worker instance.");
+        this.workerHolder.set(new WorkerHolder(worker, instance));
     }
 
     private WorkerInstance newWorkerInstance(final Worker worker) {
@@ -290,5 +316,38 @@ public final class JdbcWorkerLivenessHeartbeat extends AbstractJdbcWorkerLivenes
             .managementPort(endpointsAllPort)
             .workerGroup(worker.getWorkerGroup())
             .build();
+    }
+
+    /**
+     * Callback to be invoked on heartbeat failure.
+     */
+    @FunctionalInterface
+    @VisibleForTesting
+    interface OnHeartbeatFailureCallback {
+        /**
+         * The callback method.
+         *
+         * @param worker   the worker object.
+         * @param instance the worker instance.
+         */
+        void execute(Worker worker, WorkerInstance instance);
+    }
+
+    private static class ExitOnHeartbeatFailureCallback implements OnHeartbeatFailureCallback {
+        /**
+         * {@inheritDoc}
+         **/
+        @Override
+        public void execute(final Worker worker, final WorkerInstance instance) {
+            WorkerInstance.Status status = instance.getStatus();
+            // Skip graceful termination if the worker was already considered being not running.
+            if (status.equals(WorkerInstance.Status.NOT_RUNNING) || status.equals(WorkerInstance.Status.EMPTY)) {
+                worker.skipGracefulTermination(true);
+            }
+            Runtime.getRuntime().exit(1);
+        }
+    }
+
+    private record WorkerHolder(Worker worker, WorkerInstance instance) {
     }
 }
