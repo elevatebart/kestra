@@ -123,6 +123,15 @@
                             class: "menu-icon",
                         },
                     },
+                    // will replace editor
+                    {
+                        href: {name: "fileeditor"},
+                        title: this.$t("fileeditor"),
+                        icon: {
+                            element: shallowRef(FolderEditOutline),
+                            class: "menu-icon",
+                        },
+                    },
                     {
                         href: {name: "templates/list"},
                         routes: this.routeStartWith("templates"),
