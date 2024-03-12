@@ -52,17 +52,20 @@
             />
         </template>
     </top-nav-bar>
-    <div>New Editor with FileTree</div>
+    <div>
+        <Editor model-value="this is an editor text" :full-height="false" />
+    </div>
 </template>
 
 <script setup>
-    import NamespaceSelect from "./NamespaceSelect.vue";
-    import TopNavBar from "../layout/TopNavBar.vue";
-    import TriggerFlow from "../flows/TriggerFlow.vue";
     import Plus from "vue-material-design-icons/Plus.vue";
     import FolderPlus from "vue-material-design-icons/FolderPlus.vue";
     import FilePlus from "vue-material-design-icons/FilePlus.vue";
     import FolderZip from "vue-material-design-icons/FolderZip.vue";
+    import NamespaceSelect from "./NamespaceSelect.vue";
+    import TopNavBar from "../layout/TopNavBar.vue";
+    import TriggerFlow from "../flows/TriggerFlow.vue";
+    import Editor from "../../components/inputs/Editor.vue";
 </script>
 
 <script>
@@ -72,9 +75,11 @@
     export default {
         data() {
             return {
-
-                flow: null,
+                files: () => ({}),
             };
+        },
+        onMounted() {
+            this.getFiles();
         },
         computed: {
             ...mapState("namespace", ["namespaces"]),
@@ -85,17 +90,22 @@
                     title: this.$t("editor")
                 };
             },
-            theme() {
-                return localStorage.getItem("theme") || "light";
-            },
-            vscodeIndexUrl() {
-                const uiSubpath = KESTRA_UI_PATH === "./" ? "/" : KESTRA_UI_PATH;
-                return `${uiSubpath}vscode.html?KESTRA_UI_PATH=${uiSubpath}&KESTRA_API_URL=${apiUrl(this.$store)}&THEME=${this.theme}&namespace=${this.namespace}`;
+            apiUrl() {
+                return apiUrl(this.$store);
             },
             namespace() {
                 return this.$route.params.namespace;
             }
         },
+        methods:{
+            getFiles(localPath="") {
+                return this.$axios
+                    .get(`${this.apiUrl}/namespace/${this.namespace}/files/directory?path=${localPath}`)
+                    .then((response) => {
+                        this.files = response.data;
+                    });
+            }
+        }
     }
 </script>
 
