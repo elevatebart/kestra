@@ -79,6 +79,8 @@
         computed: {
             ...mapState("namespace", ["namespaces"]),
             routeInfo() {
+                // TODO: could this be the same as left menu ?
+                // or at least defined once when we define routes instead of 3 times
                 return {
                     title: this.$t("editor")
                 };
