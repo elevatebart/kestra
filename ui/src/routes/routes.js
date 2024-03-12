@@ -30,6 +30,7 @@ export default [
 
     //Namespace file editor
     {name: "editor", path: "/:tenant?/editor/:namespace?", component: Editor},
+    {name: "fileeditor", path: "/:tenant?/fileeditor/:namespace?", component: Editor},
 
     //Flows
     {name: "flows/list", path: "/:tenant?/flows", component: Flows},
