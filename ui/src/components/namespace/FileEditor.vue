@@ -52,8 +52,16 @@
             />
         </template>
     </top-nav-bar>
-    <div>
-        <Editor model-value="this is an editor text" :full-height="false" />
+    <div class="editor-panel">
+        <FileTree :files="files" class="filetree" />
+
+        <Editor
+            class="editor"
+            :navbar="false"
+            :full-height="false"
+            :input="true"
+            model-value="this is an editor text"
+        />
     </div>
 </template>
 
@@ -66,22 +74,54 @@
     import TopNavBar from "../layout/TopNavBar.vue";
     import TriggerFlow from "../flows/TriggerFlow.vue";
     import Editor from "../../components/inputs/Editor.vue";
+    import FileTree from "../../components/FileTree.vue";
 </script>
 
 <script>
+    import RouteContext from "../../mixins/routeContext";
+    import RestoreUrl from "../../mixins/restoreUrl";
     import {apiUrl} from "override/utils/route";
     import {mapState} from "vuex";
+    import {storageKeys} from "../../utils/constants";
 
     export default {
+        mixins: [RouteContext, RestoreUrl],
         data() {
             return {
                 files: () => ({}),
+                flow: null
             };
         },
-        onMounted() {
+        mounted() {
             this.getFiles();
         },
+        watch: {
+            namespace() {
+                this.getFiles();
+            }
+        },
+        methods: {
+            namespaceUpdate(namespace) {
+                localStorage.setItem(storageKeys.LATEST_NAMESPACE, namespace);
+                this.$router.push({
+                    params: {
+                        namespace
+                    }
+                });
+            },
+            getFiles(localPath="") {
+                return fetch(`${this.apiUrl}/namespaces/${this.namespace}/files/directory?path=/${localPath}`)
+                    .then((response) => {
+                        return response.json()
+                    }).then((response) => {
+                        // TODO: this should fill the store instead
+                        this.files = response;
+                    });
+            }
+        },
         computed: {
+            // TODO: add the file list to the store
+            // so it can be loaded and cached
             ...mapState("namespace", ["namespaces"]),
             routeInfo() {
                 // TODO: could this be the same as left menu ?
@@ -97,16 +137,27 @@
                 return this.$route.params.namespace;
             }
         },
-        methods:{
-            getFiles(localPath="") {
-                return this.$axios
-                    .get(`${this.apiUrl}/namespace/${this.namespace}/files/directory?path=${localPath}`)
-                    .then((response) => {
-                        this.files = response.data;
-                    });
-            }
-        }
     }
 </script>
+
+<style scoped>
+.editor-panel {
+    display: flex;
+    flex-direction: row;
+    align-items: stretch;
+    width: 100%;
+}
+
+.filetree {
+    width: 300px;
+    border-right: 1px solid #e0e0e0;
+    padding: 1rem;
+}
+
+.editor{
+    padding: 1rem;
+}
+
+</style>
 
 
